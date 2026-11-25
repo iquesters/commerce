@@ -60,9 +60,10 @@ class ProductAdminTest extends TestCase
         $user = $this->makeUser('user');
 
         $this->actingAs($user)->getJson('/products/data')->assertForbidden();
-        $this->getJson("/products/{$product->uid}/quote?code=alumni")->assertOk()
-            ->assertJsonPath('response_schema.data.final_price', 800.0)
+        $quote = $this->getJson("/products/{$product->uid}/quote?code=alumni")->assertOk()
             ->assertJsonPath('response_schema.data.discount.code', 'ALUMNI');
+        // JSON has no float type: 800.0 arrives as 800, so compare the amount, not the type.
+        $this->assertEquals(800, $quote->json('response_schema.data.final_price'));
     }
 
     public function test_the_seeder_makes_the_tables_forms_and_access(): void
