@@ -1,14 +1,12 @@
 <?php
 
-namespace Iquesters\Product\Models;
+namespace Iquesters\Commerce\Models;
 
 use Illuminate\Database\Eloquent\Model;
-use Illuminate\Database\Eloquent\Factories\HasFactory;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 class ProductMeta extends Model
 {
-    use HasFactory;
-
     protected $table = 'product_metas';
 
     protected $fillable = [
@@ -19,4 +17,9 @@ class ProductMeta extends Model
         'created_by',
         'updated_by',
     ];
+
+    public function product(): BelongsTo
+    {
+        return $this->belongsTo(Product::class, 'ref_parent');
+    }
 }
