@@ -157,49 +157,59 @@ class CommerceSeeder extends BaseSeeder
             'fields' => [
                 ['id' => 'product', 'type' => 'section', 'label' => 'Product', 'description' => 'What it is and who sells it.'],
                 ['id' => 'organisation_id', 'label' => 'Organisation', 'type' => 'select', 'required' => true, 'optionsFrom' => ['url' => '/products/options/organisations']],
-                ['id' => 'name', 'label' => 'Name', 'type' => 'text', 'required' => true, 'maxLength' => 255],
-                ['id' => 'type', 'label' => 'Type', 'type' => 'select', 'required' => true, 'options' => $options(Product::TYPES)],
-                ['id' => 'kind', 'label' => 'Kind', 'type' => 'select', 'options' => [
-                    ['value' => Product::KIND_VIRTUAL, 'label' => 'Virtual (membership, ticket, donation, service)'],
-                    ['value' => Product::KIND_PHYSICAL, 'label' => 'Physical (something handed over)'],
+                ['id' => 'name', 'label' => 'Name', 'type' => 'text', 'required' => true, 'maxLength' => 255, 'placeholder' => 'e.g. Silk saree, Membership 2027, Event pass'],
+                ['id' => 'type', 'label' => 'Type', 'type' => 'select', 'required' => true, 'options' => $options(Product::TYPES), 'helperText' => 'Bundle: several products sold together at one price.'],
+                ['id' => 'kind', 'label' => 'Is it a physical item?', 'type' => 'radio', 'required' => true, 'default' => Product::KIND_VIRTUAL, 'options' => [
+                    ['value' => Product::KIND_VIRTUAL, 'label' => 'No: access or a service (membership, ticket, donation)'],
+                    ['value' => Product::KIND_PHYSICAL, 'label' => 'Yes: something handed over or shipped (e.g. a saree, a T-shirt)'],
                 ]],
-                ['id' => 'visibility', 'label' => 'Who can buy it', 'type' => 'select', 'options' => [
+                ['id' => 'visibility', 'label' => 'Who can buy it', 'type' => 'select', 'required' => true, 'default' => Product::VISIBILITY_PUBLIC, 'options' => [
                     ['value' => Product::VISIBILITY_PUBLIC, 'label' => 'Anyone, where it is offered'],
-                    ['value' => Product::VISIBILITY_PRIVATE, 'label' => 'Private: only admins add it (e.g. crew, invited guests)'],
+                    ['value' => Product::VISIBILITY_PRIVATE, 'label' => 'Only admins can give it (e.g. crew, invited guests)'],
                 ]],
-                ['id' => 'pricing', 'type' => 'section', 'label' => 'Price', 'description' => 'Discounts and coupon codes are set under Discounts & coupons. A bundle\'s price is its combined price.'],
-                ['id' => 'price', 'label' => 'Price', 'type' => 'number', 'required' => true, 'min' => 0, 'step' => '0.01'],
+                ['id' => 'status', 'label' => 'Status', 'type' => 'select', 'required' => true, 'default' => Product::STATUS_ACTIVE, 'options' => [
+                    ['value' => Product::STATUS_ACTIVE, 'label' => 'Active: can be sold'],
+                    ['value' => Product::STATUS_INACTIVE, 'label' => 'Inactive: not sold'],
+                ]],
+                ['id' => 'description', 'label' => 'Description', 'type' => 'textarea', 'rows' => 3, 'maxLength' => 5000],
+
+                ['id' => 'pricing', 'type' => 'section', 'label' => 'Price', 'description' => 'Discounts and coupon codes are set under Discounts & coupons.'],
                 ['id' => 'custom_amount', 'label' => 'The buyer chooses the amount (e.g. a donation)', 'type' => 'checkbox'],
-                ['id' => 'min_amount', 'label' => 'Minimum amount', 'type' => 'number', 'min' => 0, 'step' => '0.01', 'helperText' => 'Empty: no minimum.'],
-                ['id' => 'max_amount', 'label' => 'Maximum amount', 'type' => 'number', 'min' => 0, 'step' => '0.01', 'helperText' => 'Empty: no maximum.'],
-                ['id' => 'bundle', 'type' => 'section', 'label' => 'Bundle items', 'description' => 'For type "bundle": the products sold together, each with its price in the bundle. Their own prices stay on them; the difference shows as the bundle\'s discount. The prices in the bundle must add up to the price above.'],
-                ['id' => 'bundle_items', 'label' => 'Products in the bundle', 'type' => 'repeater', 'addLabel' => 'Add product', 'fields' => [
+                ['id' => 'price', 'showWhen' => ['field' => 'custom_amount', 'equals' => false], 'label' => 'Price', 'type' => 'number', 'required' => true, 'min' => 0, 'step' => '0.01', 'helperText' => 'For a bundle: the price of everything in it together.'],
+                ['id' => 'min_amount', 'showWhen' => ['field' => 'custom_amount', 'equals' => true], 'label' => 'Minimum amount', 'type' => 'number', 'min' => 0, 'step' => '0.01', 'placeholder' => 'No minimum'],
+                ['id' => 'offer_with_every_order', 'showWhen' => ['field' => 'type', 'equals' => 'donation'], 'label' => 'Offer with every paid order', 'type' => 'checkbox', 'helperText' => 'People paying for anything of this organisation (event tickets, a membership) see an optional donation before paying.'],
+                ['id' => 'max_amount', 'showWhen' => ['field' => 'custom_amount', 'equals' => true], 'label' => 'Maximum amount', 'type' => 'number', 'min' => 0, 'step' => '0.01', 'placeholder' => 'No maximum'],
+                ['id' => 'currency', 'label' => 'Currency', 'type' => 'text', 'maxLength' => 3, 'placeholder' => 'INR', 'helperText' => 'Three letters (e.g. INR, USD).'],
+
+                ['id' => 'bundle', 'showWhen' => ['field' => 'type', 'equals' => 'bundle'], 'type' => 'section', 'label' => 'Products in the bundle', 'description' => "Each product with its price inside the bundle; together they make the bundle's price. A product's own price minus its price here shows as the discount (e.g. a membership ₹300 at ₹0)."],
+                ['id' => 'bundle_items', 'showWhen' => ['field' => 'type', 'equals' => 'bundle'], 'label' => 'Products in the bundle', 'type' => 'repeater', 'addLabel' => 'Add product', 'fields' => [
                     ['id' => 'product_id', 'label' => 'Product', 'type' => 'select', 'required' => true, 'optionsFrom' => ['url' => '/products/options/items']],
-                    ['id' => 'quantity', 'label' => 'Quantity', 'type' => 'number', 'min' => 1],
+                    ['id' => 'quantity', 'label' => 'Quantity', 'type' => 'number', 'min' => 1, 'placeholder' => '1'],
                     ['id' => 'price_in_bundle', 'label' => 'Price in the bundle', 'type' => 'number', 'required' => true, 'min' => 0],
                 ]],
-                ['id' => 'validity_section', 'type' => 'section', 'label' => 'Validity', 'description' => 'How long what is bought lasts (e.g. a membership till 31 Dec 2027).'],
-                ['id' => 'validity', 'label' => 'Valid', 'type' => 'select', 'options' => [
-                    ['value' => Product::VALIDITY_NONE, 'label' => 'No validity'],
+
+                ['id' => 'validity_section', 'showWhen' => ['field' => 'kind', 'equals' => Product::KIND_VIRTUAL], 'type' => 'section', 'label' => 'Validity', 'description' => 'How long what is bought lasts (e.g. a membership till 31 Dec 2027). Physical items have none.'],
+                ['id' => 'validity', 'showWhen' => ['field' => 'kind', 'equals' => Product::KIND_VIRTUAL], 'label' => 'Valid', 'type' => 'select', 'default' => Product::VALIDITY_NONE, 'options' => [
+                    ['value' => Product::VALIDITY_NONE, 'label' => 'Always (no end)'],
                     ['value' => Product::VALIDITY_FIXED, 'label' => 'Between two dates'],
                     ['value' => Product::VALIDITY_DURATION, 'label' => 'For a time from the purchase'],
                 ]],
-                ['id' => 'valid_from', 'label' => 'Valid from', 'type' => 'date'],
-                ['id' => 'valid_until', 'label' => 'Valid until', 'type' => 'date'],
-                ['id' => 'valid_for', 'label' => 'Valid for', 'type' => 'number', 'min' => 1],
-                ['id' => 'valid_unit', 'label' => 'Unit', 'type' => 'select', 'options' => [
+                ['id' => 'valid_from', 'showWhen' => ['field' => 'validity', 'equals' => Product::VALIDITY_FIXED], 'label' => 'Valid from', 'type' => 'date', 'required' => true],
+                ['id' => 'valid_until', 'showWhen' => ['field' => 'validity', 'equals' => Product::VALIDITY_FIXED], 'label' => 'Valid until', 'type' => 'date', 'required' => true],
+                ['id' => 'valid_for', 'showWhen' => ['field' => 'validity', 'equals' => Product::VALIDITY_DURATION], 'label' => 'Valid for', 'type' => 'number', 'min' => 1, 'required' => true],
+                ['id' => 'valid_unit', 'showWhen' => ['field' => 'validity', 'equals' => Product::VALIDITY_DURATION], 'label' => 'Unit', 'type' => 'select', 'required' => true, 'options' => [
                     ['value' => 'days', 'label' => 'Days'], ['value' => 'months', 'label' => 'Months'], ['value' => 'years', 'label' => 'Years'],
                 ]],
-                ['id' => 'sale', 'type' => 'section', 'label' => 'On sale', 'description' => 'When it can be bought. Empty: always (while active).'],
-                ['id' => 'sale_from', 'label' => 'On sale from', 'type' => 'datetime-local'],
-                ['id' => 'sale_until', 'label' => 'On sale until', 'type' => 'datetime-local'],
-                ['id' => 'stock', 'type' => 'section', 'label' => 'Stock', 'description' => 'Limit how many can be sold (e.g. an auditorium\'s seats).'],
+
+                ['id' => 'sale', 'type' => 'section', 'label' => 'When it is sold', 'description' => 'While active it is always on sale, unless you set dates.'],
+                ['id' => 'limit_sale', 'label' => 'Sell only between dates', 'type' => 'checkbox'],
+                ['id' => 'sale_from', 'showWhen' => ['field' => 'limit_sale', 'equals' => true], 'label' => 'On sale from', 'type' => 'datetime-local'],
+                ['id' => 'sale_until', 'showWhen' => ['field' => 'limit_sale', 'equals' => true], 'label' => 'On sale until', 'type' => 'datetime-local'],
+
+                ['id' => 'stock', 'type' => 'section', 'label' => 'Inventory', 'description' => 'Your code for it, and how many you have to sell (e.g. sarees in the shop, seats in a hall).'],
+                ['id' => 'sku', 'label' => 'SKU (your product code)', 'type' => 'text', 'maxLength' => 100, 'placeholder' => 'e.g. SAREE-SILK-RED'],
                 ['id' => 'track_stock', 'label' => 'Limit the number sold', 'type' => 'checkbox'],
-                ['id' => 'stock_quantity', 'label' => 'How many can be sold', 'type' => 'number', 'min' => 0],
-                ['id' => 'currency', 'label' => 'Currency', 'type' => 'text', 'maxLength' => 3, 'helperText' => 'Three letters, e.g. INR. Leave empty for the default currency.'],
-                ['id' => 'sku', 'label' => 'SKU', 'type' => 'text', 'maxLength' => 100],
-                ['id' => 'status', 'label' => 'Status', 'type' => 'select', 'options' => $options([Product::STATUS_ACTIVE, Product::STATUS_INACTIVE])],
-                ['id' => 'description', 'label' => 'Description', 'type' => 'textarea', 'rows' => 3, 'maxLength' => 5000],
+                ['id' => 'stock_quantity', 'showWhen' => ['field' => 'track_stock', 'equals' => true], 'label' => 'How many can be sold', 'type' => 'number', 'min' => 0, 'required' => true],
             ],
         ];
     }

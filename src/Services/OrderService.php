@@ -9,6 +9,8 @@ use Iquesters\Commerce\Models\Order;
 use Iquesters\Commerce\Models\OrderStatusHistory;
 use Iquesters\Commerce\Models\Product;
 use Iquesters\Commerce\Support\OrderException;
+use Iquesters\Commerce\Enums\Module;
+use Iquesters\Foundation\Support\ConfProvider;
 use Iquesters\Foundation\System\Traits\Loggable;
 use Iquesters\Organisation\Models\Organisation;
 
@@ -299,7 +301,9 @@ class OrderService
     /** "TTV-MEET-0042": the organisation's next number for that prefix (locked, so two orders never share one). */
     public function nextReference(Organisation $organisation, ?string $prefix): string
     {
-        $prefix = strtoupper(trim((string) preg_replace('/[^A-Za-z0-9-]+/', '-', (string) $prefix), '-')) ?: 'ORD';
+        // No prefix given: commerce's setting (order_reference_prefix, default ORD).
+        $prefix = ($prefix === null || trim($prefix) === '') ? (string) ConfProvider::from(Module::COMMERCE)->order_reference_prefix : $prefix;
+        $prefix = strtoupper(trim((string) preg_replace('/[^A-Za-z0-9-]+/', '-', $prefix), '-')) ?: 'ORD';
         $prefix = mb_substr($prefix, 0, 32);
 
         DB::table('order_sequences')->insertOrIgnore([

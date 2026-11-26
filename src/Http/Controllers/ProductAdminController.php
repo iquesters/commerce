@@ -147,10 +147,11 @@ class ProductAdminController extends Controller
             'organisation_id' => ['required', 'integer', Rule::in(ProductAccess::organisationIds($request->user()))],
             'name' => ['required', 'string', 'max:255'],
             'type' => ['required', Rule::in(Product::TYPES)],
-            'kind' => ['nullable', Rule::in([Product::KIND_VIRTUAL, Product::KIND_PHYSICAL])],
+            'kind' => ['required', Rule::in([Product::KIND_VIRTUAL, Product::KIND_PHYSICAL])],
             'visibility' => ['nullable', Rule::in([Product::VISIBILITY_PUBLIC, Product::VISIBILITY_PRIVATE])],
             'description' => ['nullable', 'string', 'max:5000'],
-            'price' => ['required', 'numeric', 'min:0', 'max:99999999'],
+            // The buyer chooses the amount (e.g. a donation): no fixed price.
+            'price' => ['nullable', 'required_unless:custom_amount,1,true', 'numeric', 'min:0', 'max:99999999'],
             'currency' => ['nullable', 'string', 'size:3'],
             'sku' => ['nullable', 'string', 'max:100'],
             'status' => ['nullable', Rule::in([Product::STATUS_ACTIVE, Product::STATUS_INACTIVE])],
@@ -160,7 +161,8 @@ class ProductAdminController extends Controller
             'valid_until' => ['nullable', 'date', 'required_if:validity,fixed', 'after_or_equal:valid_from'],
             'valid_for' => ['nullable', 'integer', 'min:1', 'max:1200', 'required_if:validity,duration'],
             'valid_unit' => ['nullable', Rule::in(Product::VALID_UNITS), 'required_if:validity,duration'],
-            // When it can be bought.
+            // When it can be bought: only between dates when ticked.
+            'limit_sale' => ['nullable', 'boolean'],
             'sale_from' => ['nullable', 'date'],
             'sale_until' => ['nullable', 'date', 'after_or_equal:sale_from'],
             // Stock.
@@ -168,6 +170,8 @@ class ProductAdminController extends Controller
             'stock_quantity' => ['nullable', 'integer', 'min:'.(int) ($product?->stock_reserved ?? 0), 'required_if:track_stock,1,true'],
             // Buyer-chosen amount (donations).
             'custom_amount' => ['nullable', 'boolean'],
+            // A donation: offer it with every paid order of the organisation.
+            'offer_with_every_order' => ['nullable', 'boolean'],
             'min_amount' => ['nullable', 'numeric', 'min:0'],
             'max_amount' => ['nullable', 'numeric', 'min:0', 'gte:min_amount'],
             // Bundle items.
@@ -180,15 +184,29 @@ class ProductAdminController extends Controller
             'stock_quantity.min' => 'Orders already hold :min; the stock can\'t be lower.',
             'bundle_items.*.product_id.exists' => 'Choose a product (not a bundle) of the same organisation.',
             'max_amount.gte' => 'The maximum must be at least the minimum.',
+            'price.required_unless' => 'Enter the price (or tick "The buyer chooses the amount").',
+            'kind.required' => 'Choose whether it is a service / access or a physical item.',
         ]);
 
         $data['currency'] = strtoupper($data['currency'] ?? '') ?: (string) ConfProvider::from(Module::COMMERCE)->default_currency;
         $data['status'] ??= Product::STATUS_ACTIVE;
-        $data['kind'] ??= Product::KIND_VIRTUAL;
         $data['visibility'] ??= Product::VISIBILITY_PUBLIC;
         $data['validity'] ??= Product::VALIDITY_NONE;
         $data['track_stock'] = (bool) ($data['track_stock'] ?? false);
         $data['custom_amount'] = (bool) ($data['custom_amount'] ?? false);
+        // A physical item (e.g. a saree) has no validity.
+        if ($data['kind'] === Product::KIND_PHYSICAL) {
+            $data['validity'] = Product::VALIDITY_NONE;
+        }
+        // "Sell only between dates" unticked: on sale whenever active.
+        if ($request->has('limit_sale') && ! $request->boolean('limit_sale')) {
+            $data['sale_from'] = $data['sale_until'] = null;
+        }
+        unset($data['limit_sale']);
+        // The buyer chooses the amount: the price is its minimum (0 when none).
+        if ($data['custom_amount']) {
+            $data['price'] = (float) ($data['min_amount'] ?? 0);
+        }
         if ($data['validity'] !== Product::VALIDITY_FIXED) {
             $data['valid_from'] = $data['valid_until'] = null;
         }
@@ -231,7 +249,10 @@ class ProductAdminController extends Controller
     /** Save a product and, for a bundle, its items (replaced). */
     private function saveProduct(Request $request, array $data, ?array $items, ?Product $product = null): Product
     {
-        return DB::transaction(function () use ($request, $data, $items, $product) {
+        $offer = $request->boolean('offer_with_every_order') && ($data['type'] ?? null) === 'donation';
+        unset($data['offer_with_every_order']);
+
+        return DB::transaction(function () use ($request, $data, $items, $product, $offer) {
             $userId = (int) $request->user()->id;
             if ($product) {
                 $product->update($data + ['updated_by' => $userId]);
@@ -245,6 +266,11 @@ class ProductAdminController extends Controller
                 }
             } elseif ($product->type !== 'bundle') {
                 $product->bundleItems()->delete();
+            }
+            // The donation setting (a meta); touched so modules that follow products (e.g. event forms) see it.
+            if ($product->getMetaValue(Product::META_OFFER_WITH_EVERY_ORDER) !== ($offer ? '1' : '0')) {
+                $product->setMetaValue(Product::META_OFFER_WITH_EVERY_ORDER, $offer ? '1' : '0');
+                $product->touch();
             }
 
             return $product->fresh(['organisation', 'bundleItems.product']);
@@ -303,6 +329,8 @@ class ProductAdminController extends Controller
             'valid_until' => $product->valid_until?->format('Y-m-d'),
             'valid_for' => $product->valid_for,
             'valid_unit' => $product->valid_unit,
+            // "Sell only between dates" is ticked when a date is set.
+            'limit_sale' => $product->sale_from !== null || $product->sale_until !== null,
             'sale_from' => $product->sale_from?->format('Y-m-d\TH:i'),
             'sale_until' => $product->sale_until?->format('Y-m-d\TH:i'),
             'on_sale' => $product->isOnSale() ? 'On sale' : 'Not on sale',
@@ -310,6 +338,7 @@ class ProductAdminController extends Controller
             'stock_quantity' => $product->stock_quantity,
             'stock_label' => $product->track_stock ? $product->stockLeft().' of '.$product->stock_quantity.' left' : 'No limit',
             'custom_amount' => (bool) $product->custom_amount,
+            'offer_with_every_order' => $product->offeredWithEveryOrder(),
             'min_amount' => $product->min_amount,
             'max_amount' => $product->max_amount,
             'bundle_items' => $product->type === 'bundle'

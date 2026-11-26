@@ -69,6 +69,26 @@ class Order extends Model
         });
     }
 
+    /**
+     * The lines for showing to people: the same item at the same price once,
+     * with its count ("2 × Membership 2027"). The order keeps a line per person.
+     *
+     * @return \Illuminate\Support\Collection<int, array{description: string, quantity: int, total: float, full: float}>
+     */
+    public function groupedLines(): \Illuminate\Support\Collection
+    {
+        return $this->lines
+            ->groupBy(fn ($l) => implode('|', [$l->product_id, $l->description, (float) $l->unit_price, round((float) $l->line_total / max(1, (int) $l->quantity), 2)]))
+            ->map(fn ($lines) => [
+                'description' => (string) $lines->first()->description,
+                'quantity' => (int) $lines->sum('quantity'),
+                'total' => round((float) $lines->sum(fn ($l) => (float) $l->line_total), 2),
+                // Before any discount (e.g. a membership included in a bundle: ₹600 → ₹0).
+                'full' => round((float) $lines->sum(fn ($l) => (float) $l->unit_price * (int) $l->quantity), 2),
+            ])
+            ->values();
+    }
+
     public function organisation(): BelongsTo
     {
         return $this->belongsTo(Organisation::class);

@@ -152,6 +152,55 @@ class Product extends Model
         };
     }
 
+    /** A donation product's setting: offered (optional amount) before every paid checkout of its organisation. */
+    public const META_OFFER_WITH_EVERY_ORDER = 'offer_with_every_order';
+
+    /**
+     * What a buyer may pay when they choose the amount (e.g. a donation): at
+     * least its minimum (₹1 when none is set) and at most its maximum, if any.
+     *
+     * @return array{min: float, max: ?float}
+     */
+    public function amountLimits(): array
+    {
+        $min = $this->min_amount !== null && (float) $this->min_amount > 0 ? (float) $this->min_amount : 1.0;
+        $max = $this->max_amount !== null && (float) $this->max_amount > 0 ? max($min, (float) $this->max_amount) : null;
+
+        return ['min' => $min, 'max' => $max];
+    }
+
+    /** The limits in words, e.g. "₹1 or more", "₹100 to ₹5,000". */
+    public function amountLimitsText(): string
+    {
+        ['min' => $min, 'max' => $max] = $this->amountLimits();
+        $symbol = strtoupper((string) ($this->currency ?: 'INR')) === 'INR' ? '₹' : strtoupper((string) $this->currency).' ';
+        $money = fn (float $v) => $symbol.rtrim(rtrim(number_format($v, 2), '0'), '.');
+
+        return $max !== null ? $money($min).' to '.$money($max) : $money($min).' or more';
+    }
+
+    public function offeredWithEveryOrder(): bool
+    {
+        return $this->type === 'donation' && $this->getMetaValue(self::META_OFFER_WITH_EVERY_ORDER) === '1';
+    }
+
+    /**
+     * The organisation's donation to offer at every paid checkout (its setting
+     * "Offer with every paid order"), if it has one active and on sale.
+     */
+    public static function donationForEveryOrder(int $organisationId): ?self
+    {
+        return self::query()
+            ->where('organisation_id', $organisationId)
+            ->where('type', 'donation')
+            ->where('status', self::STATUS_ACTIVE)
+            ->where('visibility', self::VISIBILITY_PUBLIC)
+            ->whereHas('metas', fn ($q) => $q->where('meta_key', self::META_OFFER_WITH_EVERY_ORDER)->where('meta_value', '1'))
+            ->orderBy('id')
+            ->get()
+            ->first(fn (self $p) => $p->isOnSale());
+    }
+
     public function getMetaValue(string $key): ?string
     {
         return $this->metas()->where('meta_key', $key)->value('meta_value');

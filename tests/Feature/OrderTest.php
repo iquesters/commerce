@@ -152,7 +152,7 @@ class OrderTest extends TestCase
         $admin = $this->memberOf($organisation, 'admin');
         $this->actingAs($admin);
 
-        $bundle = ['organisation_id' => $organisation->id, 'name' => 'Pass + membership', 'type' => 'bundle', 'price' => 600];
+        $bundle = ['organisation_id' => $organisation->id, 'name' => 'Pass + membership', 'type' => 'bundle', 'kind' => 'virtual', 'price' => 600];
         // The items' prices in the bundle must add up to its price.
         $this->postJson('/products', $bundle + ['bundle_items' => [
             ['product_id' => $pass->id, 'price_in_bundle' => 400], ['product_id' => $membership->id, 'price_in_bundle' => 100],
