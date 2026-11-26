@@ -3,7 +3,9 @@
 All notable changes to `iquesters/commerce` are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [Unreleased] – 2.0.0
+## [Unreleased]
+
+## [2.0.0] – 2026-11-27
 
 ### Added (showing an order)
 - **`Order::groupedLines()`**: the lines for people to read, the same item at the same price once with its count (*2 × Membership 2027*), its total and its price before discount. The order record still lists a line per person.
