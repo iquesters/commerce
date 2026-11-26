@@ -6,14 +6,11 @@ use Illuminate\Support\Facades\Schema;
 
 return new class extends Migration
 {
+    /**
+     * Run the migrations.
+     */
     public function up(): void
     {
-        // Renamed from an unprefixed file (so it runs before the dated upgrades);
-        // existing installs already have these tables.
-        if (Schema::hasTable('products')) {
-            return;
-        }
-
         Schema::create('products', function (Blueprint $table) {
             $table->id();
             $table->ulid('uid')->unique();
@@ -38,9 +35,12 @@ return new class extends Migration
         });
     }
 
+    /**
+     * Reverse the migrations.
+     */
     public function down(): void
     {
-        // Intentionally empty: renamed from an unprefixed migration that existing
-        // installs already ran; rolling it back must not drop live data.
+        Schema::dropIfExists('products');
+        Schema::dropIfExists('product_metas');
     }
 };
