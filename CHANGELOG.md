@@ -5,6 +5,28 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased] – 2.0.0
 
+### Added (showing an order)
+- **`Order::groupedLines()`**: the lines for people to read, the same item at the same price once with its count (*2 × Membership 2027*), its total and its price before discount. The order record still lists a line per person.
+
+### Added (amounts the buyer chooses)
+- **`Product::amountLimits()` / `amountLimitsText()`**: what a buyer may pay for a choose-the-amount product (e.g. a donation): its minimum (₹1 when none is set) and its maximum, and the same in words (*₹100 to ₹5,000*, *₹1 or more*), for other modules' forms.
+
+### Added (donations everywhere)
+- **"Offer with every paid order"** on a donation product (product meta `offer_with_every_order`): modules offer an optional donation at every paid checkout of the organisation (event registrations, paying a membership). `Product::donationForEveryOrder($organisationId)`.
+
+### Changed (the product form)
+- **Fields show only when they apply**: *Minimum / Maximum amount* only when *the buyer chooses the amount* (then no *Price* is asked; the price is the minimum); *Products in the bundle* only for type Bundle; *Validity* only for things that aren't physical (a saree has none; the server also clears it), with *Valid from / until* or *Valid for / unit* by the choice; *On sale from / until* only after *Sell only between dates* (unticked clears them); *How many can be sold* only after *Limit the number sold*.
+- **"Is it a physical item?"** (the kind) is required, with plain choices; *Who can buy it* and *Status* say what they mean. Sections: Product, Price, Products in the bundle, Validity, When it is sold, Inventory (SKU and stock). No more "Empty: no minimum" hints: the boxes say *No minimum* / *No maximum*.
+
+### Added (order numbers)
+- **Setting `order_reference_prefix`** (default `ORD`): orders are numbered `{prefix}-0001`, `-0002`… per organisation. A caller may still pass its own prefix.
+
+### Added (orders)
+- **Product options:** kind (virtual / physical), visibility (public / **private**: only admins add it, e.g. crew), **validity** (none, between dates, or a time from the purchase), an **on-sale window**, **stock** (optional on any product: how many can be sold, held by orders, given back on cancel), a **buyer-chosen amount** with minimum / maximum (donations), and the record that made it (`ref_type` / `ref_id`, e.g. an event).
+- **Bundles** (type `bundle`): products sold together at a combined price; each item keeps its own price and has a **price in the bundle** (the difference is the bundle's discount); the prices in the bundle must add up to the bundle's price. Edited in the product form (repeater, options from `/products/options/items`).
+- **Orders** (`orders`, `order_lines`, `order_status_histories`, `order_sequences`): `OrderService::create()` checks what can be bought (active, on sale, public unless an admin adds it, stock, amount limits), turns a bundle into one line per item (own price, discount, price paid), copies the prices onto the lines and gives the order a **reference** per organisation and prefix (`TTV-MEET-0001`). Statuses awaiting payment → under review → paid / rejected (proof can be sent again) / cancelled, with a history; a free order is paid at once. **Paid** fills each line's validity and fires **`OrderPaid`** (and `OrderStatusChanged` on every move) so other modules react without commerce knowing them.
+- **Orders** screen (generic table `order-table`, `/orders/data`): reference, buyer, total, status; the record shows the lines (price, discount, total, validity) and the history; **Cancel the order** (form `order-cancel`).
+
 ### Changed (renamed to commerce)
 - **`iquesters/product` is now `iquesters/commerce`** (repo `iquesters/commerce`), because it will also hold sales orders and receipts. Namespace `Iquesters\Commerce`, provider `CommerceServiceProvider`, conf `CommerceConf` (`Iquesters\Commerce\Enums\Module::COMMERCE`), seeder `CommerceSeeder`, command **`commerce:seed`**. Tables, models (`Product`, `ProductDiscount`...), routes (`/products`), permissions (`manage-products`) and table/form schema slugs keep their names.
 - **Existing installs carry over:** migration `rename_product_module_to_commerce` renames the `product` module row (keeping its roles and metas), its settings (`module_settings`) and its navigation keys. Switch with `composer remove iquesters/product`, `composer require iquesters/commerce`, `php artisan migrate`, `php artisan commerce:seed`.
