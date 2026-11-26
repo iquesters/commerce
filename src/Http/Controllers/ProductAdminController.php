@@ -7,7 +7,9 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Routing\Controller;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\Rule;
+use Illuminate\Validation\ValidationException;
 use Iquesters\Commerce\Enums\Module;
 use Iquesters\Commerce\Models\Product;
 use Iquesters\Commerce\Models\ProductDiscount;
@@ -48,7 +50,8 @@ class ProductAdminController extends Controller
 
     public function storeProduct(Request $request): JsonResponse
     {
-        $product = Product::create($this->validatedProduct($request) + ['created_by' => $request->user()->id, 'updated_by' => $request->user()->id]);
+        [$data, $items] = $this->validatedProduct($request);
+        $product = $this->saveProduct($request, $data, $items);
 
         return $this->saved('Product created.', $this->productRow($product), 201);
     }
@@ -56,9 +59,21 @@ class ProductAdminController extends Controller
     public function updateProduct(Request $request, string $uid): JsonResponse
     {
         $product = $this->findProduct($request, $uid);
-        $product->update($this->validatedProduct($request) + ['updated_by' => $request->user()->id]);
+        [$data, $items] = $this->validatedProduct($request, $product);
+        $product = $this->saveProduct($request, $data, $items, $product);
 
-        return $this->saved('Product saved.', $this->productRow($product->fresh('organisation')));
+        return $this->saved('Product saved.', $this->productRow($product));
+    }
+
+    /** Options of a bundle's item select: the organisation's products that aren't bundles. */
+    public function itemOptions(Request $request): JsonResponse
+    {
+        $products = $this->scoped($request, Product::query())->where('type', '!=', 'bundle')->orderBy('name')->get(['id', 'name', 'price', 'currency']);
+
+        return response()->json(['success' => true, 'data' => [
+            ['value' => '', 'label' => 'Choose…'],
+            ...$products->map(fn ($p) => ['value' => (int) $p->id, 'label' => "{$p->name} ({$p->currency} ".number_format((float) $p->price, 2).')'])->all(),
+        ]]);
     }
 
     // ---- Discounts ---------------------------------------------------------
@@ -124,23 +139,116 @@ class ProductAdminController extends Controller
 
     // ---- Helpers -----------------------------------------------------------
 
-    private function validatedProduct(Request $request): array
+    /** @return array{0: array, 1: ?array} the product's values and, for a bundle, its items */
+    private function validatedProduct(Request $request, ?Product $product = null): array
     {
+        $organisationId = (int) $request->input('organisation_id');
         $data = $request->validate([
             'organisation_id' => ['required', 'integer', Rule::in(ProductAccess::organisationIds($request->user()))],
             'name' => ['required', 'string', 'max:255'],
             'type' => ['required', Rule::in(Product::TYPES)],
+            'kind' => ['nullable', Rule::in([Product::KIND_VIRTUAL, Product::KIND_PHYSICAL])],
+            'visibility' => ['nullable', Rule::in([Product::VISIBILITY_PUBLIC, Product::VISIBILITY_PRIVATE])],
             'description' => ['nullable', 'string', 'max:5000'],
             'price' => ['required', 'numeric', 'min:0', 'max:99999999'],
             'currency' => ['nullable', 'string', 'size:3'],
             'sku' => ['nullable', 'string', 'max:100'],
             'status' => ['nullable', Rule::in([Product::STATUS_ACTIVE, Product::STATUS_INACTIVE])],
-        ], ['organisation_id.in' => "You don't manage that organisation."]);
+            // Validity of what is bought.
+            'validity' => ['nullable', Rule::in([Product::VALIDITY_NONE, Product::VALIDITY_FIXED, Product::VALIDITY_DURATION])],
+            'valid_from' => ['nullable', 'date', 'required_if:validity,fixed'],
+            'valid_until' => ['nullable', 'date', 'required_if:validity,fixed', 'after_or_equal:valid_from'],
+            'valid_for' => ['nullable', 'integer', 'min:1', 'max:1200', 'required_if:validity,duration'],
+            'valid_unit' => ['nullable', Rule::in(Product::VALID_UNITS), 'required_if:validity,duration'],
+            // When it can be bought.
+            'sale_from' => ['nullable', 'date'],
+            'sale_until' => ['nullable', 'date', 'after_or_equal:sale_from'],
+            // Stock.
+            'track_stock' => ['nullable', 'boolean'],
+            'stock_quantity' => ['nullable', 'integer', 'min:'.(int) ($product?->stock_reserved ?? 0), 'required_if:track_stock,1,true'],
+            // Buyer-chosen amount (donations).
+            'custom_amount' => ['nullable', 'boolean'],
+            'min_amount' => ['nullable', 'numeric', 'min:0'],
+            'max_amount' => ['nullable', 'numeric', 'min:0', 'gte:min_amount'],
+            // Bundle items.
+            'bundle_items' => ['nullable', 'array', 'max:20'],
+            'bundle_items.*.product_id' => ['required', 'integer', Rule::exists('products', 'id')->where('organisation_id', $organisationId)->whereNot('type', 'bundle')],
+            'bundle_items.*.quantity' => ['nullable', 'integer', 'min:1', 'max:100'],
+            'bundle_items.*.price_in_bundle' => ['required', 'numeric', 'min:0'],
+        ], [
+            'organisation_id.in' => "You don't manage that organisation.",
+            'stock_quantity.min' => 'Orders already hold :min; the stock can\'t be lower.',
+            'bundle_items.*.product_id.exists' => 'Choose a product (not a bundle) of the same organisation.',
+            'max_amount.gte' => 'The maximum must be at least the minimum.',
+        ]);
 
         $data['currency'] = strtoupper($data['currency'] ?? '') ?: (string) ConfProvider::from(Module::COMMERCE)->default_currency;
         $data['status'] ??= Product::STATUS_ACTIVE;
+        $data['kind'] ??= Product::KIND_VIRTUAL;
+        $data['visibility'] ??= Product::VISIBILITY_PUBLIC;
+        $data['validity'] ??= Product::VALIDITY_NONE;
+        $data['track_stock'] = (bool) ($data['track_stock'] ?? false);
+        $data['custom_amount'] = (bool) ($data['custom_amount'] ?? false);
+        if ($data['validity'] !== Product::VALIDITY_FIXED) {
+            $data['valid_from'] = $data['valid_until'] = null;
+        }
+        if ($data['validity'] !== Product::VALIDITY_DURATION) {
+            $data['valid_for'] = $data['valid_unit'] = null;
+        }
+        if (! $data['track_stock']) {
+            $data['stock_quantity'] = null;
+        }
+        if (! $data['custom_amount']) {
+            $data['min_amount'] = $data['max_amount'] = null;
+        }
 
-        return $data;
+        $items = null;
+        if ($data['type'] === 'bundle') {
+            $items = collect($request->input('bundle_items', []))->values()->map(fn ($item, $i) => [
+                'product_id' => (int) $item['product_id'],
+                'quantity' => max(1, (int) ($item['quantity'] ?? 1)),
+                'price_in_bundle' => round((float) $item['price_in_bundle'], 2),
+                'sort' => $i,
+            ]);
+            $sum = round($items->sum(fn ($i) => $i['price_in_bundle'] * $i['quantity']), 2);
+            if ($items->isEmpty()) {
+                throw ValidationException::withMessages(['bundle_items' => 'A bundle needs at least one product.']);
+            }
+            if ($items->pluck('product_id')->duplicates()->isNotEmpty()) {
+                throw ValidationException::withMessages(['bundle_items' => 'Each product can be in the bundle once (use its quantity).']);
+            }
+            if (abs($sum - round((float) $data['price'], 2)) > 0.001) {
+                throw ValidationException::withMessages(['bundle_items' => 'The items\' prices in the bundle add up to '.number_format($sum, 2).'; they must add up to the bundle\'s price ('.number_format((float) $data['price'], 2).').']);
+            }
+            $items = $items->all();
+            $data['custom_amount'] = false;
+        }
+        unset($data['bundle_items']);
+
+        return [$data, $items];
+    }
+
+    /** Save a product and, for a bundle, its items (replaced). */
+    private function saveProduct(Request $request, array $data, ?array $items, ?Product $product = null): Product
+    {
+        return DB::transaction(function () use ($request, $data, $items, $product) {
+            $userId = (int) $request->user()->id;
+            if ($product) {
+                $product->update($data + ['updated_by' => $userId]);
+            } else {
+                $product = Product::create($data + ['created_by' => $userId, 'updated_by' => $userId]);
+            }
+            if ($items !== null) {
+                $product->bundleItems()->delete();
+                foreach ($items as $item) {
+                    $product->bundleItems()->create($item);
+                }
+            } elseif ($product->type !== 'bundle') {
+                $product->bundleItems()->delete();
+            }
+
+            return $product->fresh(['organisation', 'bundleItems.product']);
+        });
     }
 
     private function validatedDiscount(Request $request, ?ProductDiscount $discount = null): array
@@ -185,9 +293,32 @@ class ProductAdminController extends Controller
             'description' => $product->description,
             'price' => $product->price,
             'currency' => $product->currency,
-            'price_label' => $product->currency.' '.number_format((float) $product->price, 2),
+            'price_label' => $product->custom_amount ? 'Any amount' : $product->currency.' '.number_format((float) $product->price, 2),
             'sku' => $product->sku,
             'status' => $product->status,
+            'kind' => $product->kind,
+            'visibility' => $product->visibility,
+            'validity' => $product->validity,
+            'valid_from' => $product->valid_from?->format('Y-m-d'),
+            'valid_until' => $product->valid_until?->format('Y-m-d'),
+            'valid_for' => $product->valid_for,
+            'valid_unit' => $product->valid_unit,
+            'sale_from' => $product->sale_from?->format('Y-m-d\TH:i'),
+            'sale_until' => $product->sale_until?->format('Y-m-d\TH:i'),
+            'on_sale' => $product->isOnSale() ? 'On sale' : 'Not on sale',
+            'track_stock' => (bool) $product->track_stock,
+            'stock_quantity' => $product->stock_quantity,
+            'stock_label' => $product->track_stock ? $product->stockLeft().' of '.$product->stock_quantity.' left' : 'No limit',
+            'custom_amount' => (bool) $product->custom_amount,
+            'min_amount' => $product->min_amount,
+            'max_amount' => $product->max_amount,
+            'bundle_items' => $product->type === 'bundle'
+                ? $product->bundleItems()->with('product:id,name,price')->get()->map(fn ($item) => [
+                    'product_id' => (int) $item->product_id,
+                    'quantity' => (int) $item->quantity,
+                    'price_in_bundle' => $item->price_in_bundle,
+                ])->all()
+                : [],
             'created_at' => $product->created_at?->format('Y-m-d H:i'),
         ];
     }

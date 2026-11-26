@@ -22,9 +22,13 @@ class CommerceSeeder extends BaseSeeder
 
     public const DISCOUNT_FORM = 'product-discount-details';
 
+    public const ORDER_CANCEL_FORM = 'order-cancel';
+
+    public const ORDER_TABLE = 'order-table';
+
     protected string $moduleName = 'commerce';
 
-    protected string $description = 'commerce module: products, prices, discounts, coupon codes (orders next)';
+    protected string $description = 'commerce module: products, bundles, prices, discounts, coupon codes, orders';
 
     protected array $metas = [
         'module_icon' => 'fas fa-box',
@@ -48,6 +52,8 @@ class CommerceSeeder extends BaseSeeder
                                 ['data' => 'name', 'title' => 'Name', 'visible' => true, 'link' => true, 'form-schema-uid' => self::PRODUCT_FORM],
                                 ['data' => 'type', 'title' => 'Type', 'visible' => true],
                                 ['data' => 'price_label', 'title' => 'Price', 'visible' => true],
+                                ['data' => 'on_sale', 'title' => 'On sale', 'visible' => true],
+                                ['data' => 'stock_label', 'title' => 'Stock', 'visible' => true],
                                 ['data' => 'organisation', 'title' => 'Organisation', 'visible' => true],
                                 ['data' => 'status', 'title' => 'Status', 'visible' => true],
                             ],
@@ -85,6 +91,37 @@ class CommerceSeeder extends BaseSeeder
                     ],
                 ],
             ],
+            [
+                'key' => 'orders',
+                'icon' => 'fas fa-receipt',
+                'label' => 'Orders',
+                'permission' => self::MANAGE_PERMISSION,
+                'table_schema' => [
+                    'slug' => self::ORDER_TABLE,
+                    'name' => 'Orders',
+                    'description' => 'What people bought from your organisation, and where each payment is',
+                    'schema' => [
+                        'entity' => 'orders',
+                        'data_url' => '/orders/data',
+                        'record' => [
+                            ['html' => '/orders/{uid}/summary', 'title' => 'Order'],
+                            ['form' => self::ORDER_CANCEL_FORM, 'mode' => 'edit', 'title' => 'Cancel the order', 'when' => ['can_cancel' => '1']],
+                        ],
+                        'dt-options' => [
+                            'columns' => [
+                                ['data' => 'reference', 'title' => 'Reference', 'visible' => true, 'link' => true, 'form-schema-uid' => self::ORDER_CANCEL_FORM],
+                                ['data' => 'buyer', 'title' => 'Buyer', 'visible' => true],
+                                ['data' => 'total_label', 'title' => 'Total', 'visible' => true],
+                                ['data' => 'status_label', 'title' => 'Status', 'visible' => true],
+                                ['data' => 'organisation', 'title' => 'Organisation', 'visible' => true],
+                                ['data' => 'created_at', 'title' => 'Created', 'visible' => true],
+                            ],
+                            'options' => ['pageLength' => 25, 'order' => [], 'responsive' => true],
+                        ],
+                        'default_view_mode' => 'inbox',
+                    ],
+                ],
+            ],
         ],
     ];
 
@@ -101,6 +138,7 @@ class CommerceSeeder extends BaseSeeder
         // The module's forms are rebuilt on every seed (the module owns them).
         $this->upsertForm(self::PRODUCT_FORM, 'Product', self::productForm());
         $this->upsertForm(self::DISCOUNT_FORM, 'Discount', self::discountForm());
+        $this->upsertForm(self::ORDER_CANCEL_FORM, 'Cancel order', self::orderCancelForm());
     }
 
     public static function productForm(): array
@@ -121,8 +159,43 @@ class CommerceSeeder extends BaseSeeder
                 ['id' => 'organisation_id', 'label' => 'Organisation', 'type' => 'select', 'required' => true, 'optionsFrom' => ['url' => '/products/options/organisations']],
                 ['id' => 'name', 'label' => 'Name', 'type' => 'text', 'required' => true, 'maxLength' => 255],
                 ['id' => 'type', 'label' => 'Type', 'type' => 'select', 'required' => true, 'options' => $options(Product::TYPES)],
-                ['id' => 'pricing', 'type' => 'section', 'label' => 'Price', 'description' => 'Discounts and coupon codes are set under Discounts & coupons.'],
+                ['id' => 'kind', 'label' => 'Kind', 'type' => 'select', 'options' => [
+                    ['value' => Product::KIND_VIRTUAL, 'label' => 'Virtual (membership, ticket, donation, service)'],
+                    ['value' => Product::KIND_PHYSICAL, 'label' => 'Physical (something handed over)'],
+                ]],
+                ['id' => 'visibility', 'label' => 'Who can buy it', 'type' => 'select', 'options' => [
+                    ['value' => Product::VISIBILITY_PUBLIC, 'label' => 'Anyone, where it is offered'],
+                    ['value' => Product::VISIBILITY_PRIVATE, 'label' => 'Private: only admins add it (e.g. crew, invited guests)'],
+                ]],
+                ['id' => 'pricing', 'type' => 'section', 'label' => 'Price', 'description' => 'Discounts and coupon codes are set under Discounts & coupons. A bundle\'s price is its combined price.'],
                 ['id' => 'price', 'label' => 'Price', 'type' => 'number', 'required' => true, 'min' => 0, 'step' => '0.01'],
+                ['id' => 'custom_amount', 'label' => 'The buyer chooses the amount (e.g. a donation)', 'type' => 'checkbox'],
+                ['id' => 'min_amount', 'label' => 'Minimum amount', 'type' => 'number', 'min' => 0, 'step' => '0.01', 'helperText' => 'Empty: no minimum.'],
+                ['id' => 'max_amount', 'label' => 'Maximum amount', 'type' => 'number', 'min' => 0, 'step' => '0.01', 'helperText' => 'Empty: no maximum.'],
+                ['id' => 'bundle', 'type' => 'section', 'label' => 'Bundle items', 'description' => 'For type "bundle": the products sold together, each with its price in the bundle. Their own prices stay on them; the difference shows as the bundle\'s discount. The prices in the bundle must add up to the price above.'],
+                ['id' => 'bundle_items', 'label' => 'Products in the bundle', 'type' => 'repeater', 'addLabel' => 'Add product', 'fields' => [
+                    ['id' => 'product_id', 'label' => 'Product', 'type' => 'select', 'required' => true, 'optionsFrom' => ['url' => '/products/options/items']],
+                    ['id' => 'quantity', 'label' => 'Quantity', 'type' => 'number', 'min' => 1],
+                    ['id' => 'price_in_bundle', 'label' => 'Price in the bundle', 'type' => 'number', 'required' => true, 'min' => 0],
+                ]],
+                ['id' => 'validity_section', 'type' => 'section', 'label' => 'Validity', 'description' => 'How long what is bought lasts (e.g. a membership till 31 Dec 2027).'],
+                ['id' => 'validity', 'label' => 'Valid', 'type' => 'select', 'options' => [
+                    ['value' => Product::VALIDITY_NONE, 'label' => 'No validity'],
+                    ['value' => Product::VALIDITY_FIXED, 'label' => 'Between two dates'],
+                    ['value' => Product::VALIDITY_DURATION, 'label' => 'For a time from the purchase'],
+                ]],
+                ['id' => 'valid_from', 'label' => 'Valid from', 'type' => 'date'],
+                ['id' => 'valid_until', 'label' => 'Valid until', 'type' => 'date'],
+                ['id' => 'valid_for', 'label' => 'Valid for', 'type' => 'number', 'min' => 1],
+                ['id' => 'valid_unit', 'label' => 'Unit', 'type' => 'select', 'options' => [
+                    ['value' => 'days', 'label' => 'Days'], ['value' => 'months', 'label' => 'Months'], ['value' => 'years', 'label' => 'Years'],
+                ]],
+                ['id' => 'sale', 'type' => 'section', 'label' => 'On sale', 'description' => 'When it can be bought. Empty: always (while active).'],
+                ['id' => 'sale_from', 'label' => 'On sale from', 'type' => 'datetime-local'],
+                ['id' => 'sale_until', 'label' => 'On sale until', 'type' => 'datetime-local'],
+                ['id' => 'stock', 'type' => 'section', 'label' => 'Stock', 'description' => 'Limit how many can be sold (e.g. an auditorium\'s seats).'],
+                ['id' => 'track_stock', 'label' => 'Limit the number sold', 'type' => 'checkbox'],
+                ['id' => 'stock_quantity', 'label' => 'How many can be sold', 'type' => 'number', 'min' => 0],
                 ['id' => 'currency', 'label' => 'Currency', 'type' => 'text', 'maxLength' => 3, 'helperText' => 'Three letters, e.g. INR. Leave empty for the default currency.'],
                 ['id' => 'sku', 'label' => 'SKU', 'type' => 'text', 'maxLength' => 100],
                 ['id' => 'status', 'label' => 'Status', 'type' => 'select', 'options' => $options([Product::STATUS_ACTIVE, Product::STATUS_INACTIVE])],
@@ -167,6 +240,22 @@ class CommerceSeeder extends BaseSeeder
                     ['value' => 'active', 'label' => 'Active'],
                     ['value' => 'inactive', 'label' => 'Inactive'],
                 ]],
+            ],
+        ];
+    }
+
+    public static function orderCancelForm(): array
+    {
+        return [
+            'endpoint' => '/orders/{uid}/cancel',
+            'method' => 'POST',
+            'submitButtonLabel' => 'Cancel the order',
+            'allowCancel' => false,
+            'defaultFieldSize' => 12,
+            'modes' => ['edit' => ['allowCancel' => false, 'allowDelete' => false]],
+            'fields' => [
+                ['id' => 'reason', 'label' => 'Why', 'type' => 'textarea', 'rows' => 2, 'required' => true, 'maxLength' => 1000,
+                    'helperText' => 'Cancelling gives its stock back. A paid order can\'t be cancelled here.'],
             ],
         ];
     }
